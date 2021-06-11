@@ -1,6 +1,6 @@
 # poaurk
 
-Plurk + Oauth Library modify from the work by (clsung's version)[https://github.com/clsung/plurk-oauth].
+Plurk + Oauth Library modify from the work by [clsung's version](https://github.com/clsung/plurk-oauth).
 
 Replace python-oauth library to requests-oauthlib.
 
@@ -44,15 +44,24 @@ from poaurk import PlurkAPI
 plurk = PlurkAPI.fromfile("api.keys")
 
 # Get own profile
-_, data = plurk.callAPI('/APP/Profile/getOwnProfile')
-print(data)
+status, data = plurk.callAPI('/APP/Profile/getOwnProfile')
+if status:
+    doSomething(data)
+else:
+    log.error(data) # Print error to your log
 
 # Get Public Profile from user_id
 # User id can obtain from other api
-_, data = plurk.callAPI('/APP/Profile/getPublicProfile', options={'user_id': '<user id>'})
-print(data)
+status, data = plurk.callAPI('/APP/Profile/getPublicProfile', options={'user_id': '<user id>'})
+if status:
+    doSomething(data)
+else:
+    log.error(data) # Print error to your log
 
 # Upload picture
-_, data = plurk.callAPI('/APP/Timeline/uploadPicture', files={'image': '<image path>'})
-print(data)
+status, data = plurk.callAPI('/APP/Timeline/uploadPicture', files={'image': '<image path>'})
+if status:
+    doSomething(data)
+else:
+    log.error(data) # Print error to your log
 ```

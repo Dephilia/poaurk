@@ -61,11 +61,16 @@ class PlurkAPI:
         return self._error
 
     def get_request_token(self):
-        self._oauth.get_request_token()
-        return {
-            'key': self._oauth.token,
-            'secret': self._oauth.token_secret,
-        }
+        try:
+            self._oauth.get_request_token()
+            return ( True, {
+                'key': self._oauth.token,
+                'secret': self._oauth.token_secret,
+            } )
+
+        except requests.exceptions.RequestException as e:
+            self._error = e
+            return ( False, e)
 
     def set_request_token(self, request_key, request_secret):
         self._oauth.authorize(access_token_key=request_key, access_token_secret=request_secret)
@@ -74,8 +79,12 @@ class PlurkAPI:
         return self._oauth.get_verifier_url()
 
     def get_access_token(self, verifier):
-        self._oauth.get_access_token(verifier)
-        return {
-            'key': self._oauth.token,
-            'secret': self._oauth.token_secret,
-        }
+        try:
+            self._oauth.get_access_token(verifier)
+            return ( True, {
+                'key': self._oauth.token,
+                'secret': self._oauth.token_secret,
+            } )
+
+        except requests.exceptions.RequestException as e:
+            self._error = e
