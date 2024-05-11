@@ -1,6 +1,42 @@
-[build-system]
-requires = [
-    "setuptools>=42",
-    "wheel"
+[project]
+name = "poaurk"
+version = "0.4.0"
+description = "Light Plurk API 2.0 Oauth Library"
+authors = [
+    { name = "Dephilia", email = "me@dephilia.moe" }
 ]
-build-backend = "setuptools.build_meta"
+dependencies = [
+    "aiohttp>=3.9.3",
+    "oauthlib>=3.2.2",
+]
+readme = "README.md"
+requires-python = ">= 3.10"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.rye]
+managed = true
+dev-dependencies = [
+    "pytest>=8.1.1",
+    "pytest-aiohttp>=1.0.5",
+    "mypy>=1.9.0",
+    "ruff-lsp>=0.0.53",
+    "ruff>=0.4.4",
+    "pyright>=1.1.362"
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/poaurk"]
+
+[tool.ruff.lint]
+select = ["E", "W", "N", "D", "F", "PL", "UP", "I"]
+
+[tool.pyright]
+exclude = [ ".venv" ]
+venvPath = "."
+venv = ".venv"

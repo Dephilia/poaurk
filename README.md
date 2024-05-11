@@ -1,8 +1,6 @@
 # poaurk
 
-Plurk + Oauth Library modify from the work by [clsung's version](https://github.com/clsung/plurk-oauth).
-
-Replace python-oauth library to requests-oauthlib.
+Light plurk + Oauth Library
 
 # Installation
 
@@ -15,53 +13,24 @@ pip install poaurk
 ## Authorize and get profile
 
 ```python
-# import package
-from poaurk import (PlurkAPI, PlurkOAuth)
+import asyncio
 
-# Init a new plurk object
-plurk = PlurkAPI("<consumer key>", "<consumer secret>")
+import aiohttp
+from poaurk import OauthCred, PlurkOAuth
 
-# Authorize if no token
-status, data = plurk.authorize()
-if not status:
-    # Failed
-    print(data)
+cred = OauthCred(customer_key='your key from plurk',
+                 customer_secret='your secret from plurk',
+                 token='optional token',
+                 token_secret='optional token secret'
+                 )
 
-# Call api
-status, data = plurk.callAPI('/APP/Profile/getOwnProfile') # status = True if successful
-print(data)
 
-```
+async def main():
+    async with aiohttp.ClientSession() as session:
+        oauth = PlurkOAuth(cred, session)
+        await oauth.authorize()
 
-## Init from json file
-
-Copy `api.keys.example` to yout project, modified it.
-
-```python
-from poaurk import PlurkAPI
-
-# Init
-plurk = PlurkAPI.fromfile("api.keys")
-
-# Get own profile
-status, data = plurk.callAPI('/APP/Profile/getOwnProfile')
-if status:
-    doSomething(data)
-else:
-    log.error(data) # Print error to your log
-
-# Get Public Profile from user_id
-# User id can obtain from other api
-status, data = plurk.callAPI('/APP/Profile/getPublicProfile', options={'user_id': '<user id>'})
-if status:
-    doSomething(data)
-else:
-    log.error(data) # Print error to your log
-
-# Upload picture
-status, data = plurk.callAPI('/APP/Timeline/uploadPicture', files={'image': '<image path>'})
-if status:
-    doSomething(data)
-else:
-    log.error(data) # Print error to your log
+        r = await oauth.request('/APP/Timeline/getPlurk', {'plurk_id': '123'})
+        print(r)
+asyncio.run(main())
 ```
