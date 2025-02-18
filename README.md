@@ -8,29 +8,15 @@ Light plurk + Oauth Library
 pip install poaurk
 ```
 
-# Example
+## Examples
 
-## Authorize and get profile
+You can find example usage in the `examples/` directory.
 
-```python
-import asyncio
+### Running the Basic Authentication Example
 
-import aiohttp
-from poaurk import OauthCred, PlurkOAuth
+1. Setup environ var for POAURK_TEST_KEY, POAURK_TEST_SECRET
+2. Run the script:
 
-cred = OauthCred(customer_key='your key from plurk',
-                 customer_secret='your secret from plurk',
-                 token='optional token',
-                 token_secret='optional token secret'
-                 )
-
-
-async def main():
-    async with aiohttp.ClientSession() as session:
-        oauth = PlurkOAuth(cred, session)
-        await oauth.authorize()
-
-        r = await oauth.request('/APP/Timeline/getPlurk', {'plurk_id': '123'})
-        print(r)
-asyncio.run(main())
+```bash
+python examples/basic_auth.py
 ```

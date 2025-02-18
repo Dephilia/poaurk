@@ -1,47 +1,85 @@
 """Provide basic OAuth1 operations for Plurk API 2.0.
 
-This module facilitates OAuth1 authentication for accessing the Plurk API 2.0. It includes functionality for obtaining request tokens, authorizing access, and retrieving access tokens.
+This module facilitates OAuth1 authentication for accessing the Plurk API 2.0.
+It includes functionality for obtaining request tokens, authorizing access, and
+retrieving access tokens.
 
-Attributes
-----------
-    BASE_URL (str): The base URL for Plurk API endpoints.
-    REQUEST_TOKEN_URL (str): The endpoint for requesting OAuth request tokens.
-    AUTHORIZATION_URL (str): The endpoint for user authorization.
-    ACCESS_TOKEN_URL (str): The endpoint for exchanging request tokens for access tokens.
-
+Example usage:
+    async with aiohttp.ClientSession() as session:
+        cred = OAuthCred(
+            customer_key="your_key",
+            customer_secret="your_secret",
+            token=None,
+            token_secret=None
+        )
+        client = PlurkOAuth(cred, session)
+        await client.authorize()
 """
 
+import asyncio
+import logging
+from abc import ABC, abstractmethod
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import parse_qsl, urljoin
 
+import aiofiles
 import aiohttp
 import oauthlib.oauth1
+from aiohttp import FormData
+
+# Set up logging
+logger = logging.getLogger(__name__)
+
+
+class PlurkOAuthError(Exception):
+    """Base exception for Plurk OAuth errors."""
+
+    pass
+
+
+class PlurkNetworkError(PlurkOAuthError):
+    """Raised when network communication fails."""
+
+    pass
+
+
+class PlurkAuthorizationError(PlurkOAuthError):
+    """Raised when authorization fails."""
+
+    pass
 
 
 @dataclass
-class OauthCred:
+class OAuthCred:
     """OAuth Credentials Dataclass.
 
     Attributes
     ----------
-        customer_key (str): The consumer key.
-        customer_secret (str): The consumer secret.
-        token (str | None): The OAuth token.
-        token_secret (str | None): The OAuth token secret.
+    customer_key : str
+        The consumer key provided by Plurk.
+    customer_secret : str
+        The consumer secret provided by Plurk.
+    token : Optional[str]
+        The OAuth token, initially None.
+    token_secret : Optional[str]
+        The OAuth token secret, initially None.
 
     """
 
     customer_key: str
     customer_secret: str
-    token: str | None
-    token_secret: str | None
+    token: str | None = None
+    token_secret: str | None = None
 
     def to_client(self) -> oauthlib.oauth1.Client:
         """Convert OAuth credentials to OAuth client.
 
         Returns
         -------
-            oauthlib.oauth1.Client: OAuth client.
+        oauthlib.oauth1.Client
+            Configured OAuth client ready for making authenticated requests.
 
         """
         return oauthlib.oauth1.Client(
@@ -52,176 +90,309 @@ class OauthCred:
         )
 
 
+class UserInteraction(ABC):
+    """Abstract base class for user interaction during OAuth flow."""
+
+    @abstractmethod
+    async def get_verification_code(self, url: str) -> str:
+        """Get verification code from user.
+
+        Parameters
+        ----------
+        url : str
+            Authorization URL to be displayed to user.
+
+        Returns
+        -------
+        str
+            Verification code entered by user.
+
+        """
+        pass
+
+
+class CliUserInteraction(UserInteraction):
+    """Command-line implementation of user interaction."""
+
+    async def get_verification_code(self, url: str) -> str:
+        """Get verification code via command line.
+
+        Parameters
+        ----------
+        url : str
+            Authorization URL to be displayed to user.
+
+        Returns
+        -------
+        str
+            Verification code entered by user.
+
+        Notes
+        -----
+        Uses asyncio.to_thread to prevent blocking the event loop.
+
+        """
+        print("Open the following URL and authorize it.")
+        print(url)
+
+        while True:
+            verifier = await asyncio.to_thread(input, "Input the verification number: ")  # noqa: E501
+            verified = await asyncio.to_thread(input, "Are you sure? (y/n) ")
+
+            if verified.lower() == "y" and verifier:
+                return verifier
+
+            if verified.lower() != "n":
+                print("Please answer 'y' or 'n'")
+
+
 class PlurkOAuth:
     """Plurk OAuth Client.
 
-    Attributes
-    ----------
-        BASE_URL (str): The base URL for Plurk API endpoints.
-        REQUEST_TOKEN_URL (str): The endpoint for requesting OAuth request tokens.
-        AUTHORIZATION_URL (str): The endpoint for user authorization.
-        ACCESS_TOKEN_URL (str): The endpoint for exchanging request tokens for access tokens.
-
+    Handles OAuth authentication flow for Plurk API 2.0.
     """
 
-    BASE_URL: str = "https://www.plurk.com/"
-    REQUEST_TOKEN_URL: str = "/OAuth/request_token"
-    AUTHORIZATION_URL: str = "/OAuth/authorize"
-    ACCESS_TOKEN_URL: str = "/OAuth/access_token"
-
-    def __init__(self, cred: OauthCred, session: aiohttp.ClientSession):
+    def __init__(
+        self,
+        cred: OAuthCred,
+        session: aiohttp.ClientSession,
+        user_interaction: UserInteraction | None = None,
+        timeout: int = 60,
+        base_url: str = "https://www.plurk.com/",
+    ) -> None:
         """Initialize PlurkOAuth.
 
-        Args:
-        ----
-            cred (OauthCred): OAuth credentials.
-            session (aiohttp.ClientSession): Aiohttp client session.
+        Parameters
+        ----------
+        cred : OAuthCred
+            OAuth credentials
+        session : aiohttp.ClientSession
+            Aiohttp client session
+        user_interaction : Optional[UserInteraction]
+            Interface for user interaction, defaults to CliUserInteraction
+        timeout : int
+            Request timeout in seconds
+        base_url : str
+            Base URL for Plurk API
 
         """
         self.cred = cred
         self.session = session
+        self.user_interaction = user_interaction or CliUserInteraction()
+        self.timeout = timeout
+        self.base_url = base_url
 
-    async def authorize(self, access_token: tuple[str, str] | None = None):
-        """Authorize access.
+        # API endpoints
+        self._request_token_url = "OAuth/request_token"  # noqa: S105
+        self._authorization_url = "OAuth/authorize"
+        self._access_token_url = "OAuth/access_token"  # noqa: S105
 
-        Args:
-        ----
-            access_token (tuple[str, str] | None): Access token and secret.
+    @asynccontextmanager
+    async def _handle_request_errors(self):  # noqa: ANN202
+        """Context manager for handling request errors.
 
-        Returns:
-        -------
-            None
+        Raises
+        ------
+        PlurkNetworkError
+            When network communication fails
+        PlurkAuthorizationError
+            When authorization fails
+        PlurkOAuthError
+            For other OAuth-related errors
 
         """
-        if access_token:
-            self.cred.token, self.cred.token_secret = access_token
-        else:
-            await self.get_request_token()
-            verifier = self.get_verifier()
-            await self.get_access_token(verifier)
+        try:
+            yield
+        except aiohttp.ClientError as e:
+            logger.error(f"Network error: {e}")
+            raise PlurkNetworkError(f"Failed to communicate with Plurk: {e}") from e  # noqa: E501
+        except oauthlib.oauth1.OAuth1Error as e:
+            logger.error(f"OAuth error: {e}")
+            raise PlurkAuthorizationError(f"OAuth authorization failed: {e}") from e  # noqa: E501
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
+            raise PlurkOAuthError(f"Unexpected error: {e}") from e
+
+    async def authorize(self, access_token: tuple[str, str] | None = None) -> None:  # noqa: E501
+        """Authorize access to Plurk API.
+
+        Parameters
+        ----------
+        access_token : Optional[Tuple[str, str]]
+            Tuple of (token, token_secret) if already available
+
+        """
+        async with self._handle_request_errors():
+            if access_token:
+                self.cred.token, self.cred.token_secret = access_token
+            else:
+                await self._complete_oauth_flow()
+
+    async def _complete_oauth_flow(self) -> None:
+        """Complete the OAuth flow by getting request token, verifier, and access token."""  # noqa: E501
+        await self.get_request_token()
+        verifier = await self.get_verifier()
+        await self.get_access_token(verifier)
 
     async def request(
         self,
         method: str,
         data: dict[str, str] | None = None,
         files: dict[str, str] | None = None,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         """Make a request to the Plurk API.
 
-        Args:
-        ----
-            method (str): The API endpoint.
-            data (dict[str, str] | None): Request data.
-            files (dict[str, str] | None): Files to upload.
+        Parameters
+        ----------
+        method : str
+            The API endpoint
+        data : Optional[Dict[str, str]]
+            Request data
+        files : Optional[Dict[str, str]]
+            Files to upload
 
-        Returns:
+        Returns
         -------
-            dict[str, str]: Response data.
+        Dict[str, Any]
+            Response data
 
         """
-        client = self.cred.to_client()
+        async with self._handle_request_errors():
+            client = self.cred.to_client()
+            uri = urljoin(self.base_url, method)
 
-        # Verifier cannot take as data
-        if data and "verifier" in data:
-            client.verifier = data["verifier"]
-            data.pop("verifier")
+            # Handle verifier in data
+            if data and "verifier" in data:
+                client.verifier = data.pop("verifier")
 
-        uri = urljoin(self.BASE_URL, method)
-        http_method = "POST"
+            # Prepare request data and headers
+            headers, body = await self._prepare_request_data(data, files)
 
-        # Handle files
+            # Sign the request
+            uri, headers, body = client.sign(
+                uri=uri,
+                http_method="POST",
+                body=body if body else {},
+                headers=headers,
+            )
+
+            # Make the request
+            async with self.session.post(
+                uri,
+                data=body,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=self.timeout),
+            ) as response:
+                response.raise_for_status()
+                return await self._parse_response(response)
+
+    async def _prepare_request_data(
+        self, data: dict[str, str] | None, files: dict[str, str] | None
+    ) -> tuple[dict[str, str], Any]:
+        """Prepare request data and headers.
+
+        Parameters
+        ----------
+        data : Optional[Dict[str, str]]
+            Request data
+        files : Optional[Dict[str, str]]
+            Files to upload
+
+        Returns
+        -------
+        Tuple[Dict[str, str], Any]
+            Headers and body for the request
+
+        """
         if files:
             headers = {}
-            form_data = aiohttp.FormData()
-            for key, value in files.items():
-                form_data.add_field(key, open(value, "rb"))
+            form_data = FormData()
+            for key, filepath in files.items():
+                async with aiofiles.open(filepath, mode="rb") as f:
+                    form_data.add_field(key, f)
             if data:
                 for key, value in data.items():
                     form_data.add_field(key, value)
-        else:
-            headers = {"Content-Type": "application/x-www-form-urlencoded"}
-            form_data = data
+            return headers, form_data
 
-        uri, headers, body = client.sign(
-            uri=uri,
-            http_method=http_method,
-            body=form_data if form_data else {},
-            headers=headers,
-        )
+        return ({"Content-Type": "application/x-www-form-urlencoded"}, data)
 
-        async with self.session.post(
-            uri,
-            data=body,
-            headers=headers,
-            raise_for_status=True,
-            timeout=aiohttp.ClientTimeout(total=60),
-        ) as r:
-            if r.content_type == "application/json":
-                return await r.json()
-            if r.content_type == "text/html":
-                return dict(parse_qsl(await r.text()))
-            raise TypeError("Invalid content type:", r.content_type)
+    async def _parse_response(self, response: aiohttp.ClientResponse) -> dict[str, Any]:  # noqa: E501
+        """Parse API response based on content type.
 
-    async def get_request_token(self) -> None:
-        """Get OAuth request token.
+        Parameters
+        ----------
+        response : aiohttp.ClientResponse
+            Response from Plurk API
 
         Returns
         -------
-            None
+        Dict[str, Any]
+            Parsed response data
+
+        Raises
+        ------
+        TypeError
+            When content type is not supported
 
         """
-        # Clear token
+        if response.content_type == "application/json":
+            return await response.json()
+        if response.content_type == "text/html":
+            return dict(parse_qsl(await response.text()))
+        raise TypeError(f"Invalid content type: {response.content_type}")
+
+    async def get_request_token(self) -> None:
+        """Get OAuth request token."""
         self.cred.token = None
         self.cred.token_secret = None
 
-        r = await self.request(self.REQUEST_TOKEN_URL)
-        self.cred.token = r["oauth_token"]
-        self.cred.token_secret = r["oauth_token_secret"]
-
-    def get_verifier(self) -> str:
-        """Get OAuth verifier.
-
-        Returns
-        -------
-            str: OAuth verifier.
-
-        """
-        print("Open the following URL and authorize it.")
-        print(self.get_verifier_url())
-
-        verified: str = "n"
-        verifier: str | None = None
-        while verified.lower() == "n":
-            verifier = input("Input the verification number: ")
-            verified = input("Are you sure? (y/n) ")
-        if not verifier:
-            raise ValueError("Unavailable verifier.")
-        return verifier
+        response = await self.request(self._request_token_url)
+        self.cred.token = response["oauth_token"]
+        self.cred.token_secret = response["oauth_token_secret"]
 
     def get_verifier_url(self) -> str:
         """Get verifier URL.
 
         Returns
         -------
-            str: Verifier URL.
+        str
+            URL for user authorization
+
+        Raises
+        ------
+        PlurkAuthorizationError
+            If tokens are not available
 
         """
-        if self.cred.token is None or self.cred.token_secret is None:
-            raise Exception("Please request a token first")
-        return f"{self.BASE_URL}{self.AUTHORIZATION_URL}?oauth_token={self.cred.token}"
+        if not self.cred.token or not self.cred.token_secret:
+            raise PlurkAuthorizationError("Please request a token first")
+        return f"{self.base_url}{self._authorization_url}?oauth_token={self.cred.token}"  # noqa: E501
+
+    async def get_verifier(self) -> str:
+        """Get OAuth verifier code through user interaction.
+
+        Returns
+        -------
+        str
+            OAuth verifier code
+
+        """
+        return await self.user_interaction.get_verification_code(
+            self.get_verifier_url()
+        )
 
     async def get_access_token(self, verifier: str) -> None:
-        """Get OAuth access token by verifier.
+        """Get OAuth access token using verifier.
 
-        Args:
-        ----
-            verifier (str): OAuth verifier.
-
-        Returns:
-        -------
-            None
+        Parameters
+        ----------
+        verifier : str
+            OAuth verifier code
 
         """
-        r = await self.request(self.ACCESS_TOKEN_URL, data={"verifier": verifier})
-        self.cred.token = r["oauth_token"]
-        self.cred.token_secret = r["oauth_token_secret"]
+        response = await self.request(
+            self._access_token_url, data={"verifier": verifier}
+        )
+        self.cred.token = response["oauth_token"]
+        self.cred.token_secret = response["oauth_token_secret"]

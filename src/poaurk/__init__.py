@@ -1,4 +1,5 @@
 """Python Plurk Oauth Library."""
-from .oauth import OauthCred, PlurkOAuth
 
-__all__ = ["PlurkOAuth", "OauthCred"]
+from .oauth import CliUserInteraction, OAuthCred, PlurkOAuth
+
+__all__ = ["CliUserInteraction", "OAuthCred", "PlurkOAuth"]
