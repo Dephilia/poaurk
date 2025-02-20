@@ -93,8 +93,9 @@ class OAuthCred:
 class UserInteraction(ABC):
     """Abstract base class for user interaction during OAuth flow."""
 
+    @staticmethod
     @abstractmethod
-    async def get_verification_code(self, url: str) -> str:
+    async def get_verification_code(url: str) -> str:
         """Get verification code from user.
 
         Parameters
@@ -114,7 +115,8 @@ class UserInteraction(ABC):
 class CliUserInteraction(UserInteraction):
     """Command-line implementation of user interaction."""
 
-    async def get_verification_code(self, url: str) -> str:
+    @staticmethod
+    async def get_verification_code(url: str) -> str:
         """Get verification code via command line.
 
         Parameters
@@ -136,7 +138,7 @@ class CliUserInteraction(UserInteraction):
         print(url)
 
         while True:
-            verifier = await asyncio.to_thread(input, "Input the verification number: ")  # noqa: E501
+            verifier = await asyncio.to_thread(input, "Input the verification number: ")
             verified = await asyncio.to_thread(input, "Are you sure? (y/n) ")
 
             if verified.lower() == "y" and verifier:
@@ -183,12 +185,13 @@ class PlurkOAuth:
         self.base_url = base_url
 
         # API endpoints
-        self._request_token_url = "OAuth/request_token"  # noqa: S105
+        self._request_token_url = "OAuth/request_token"
         self._authorization_url = "OAuth/authorize"
-        self._access_token_url = "OAuth/access_token"  # noqa: S105
+        self._access_token_url = "OAuth/access_token"
 
+    @staticmethod
     @asynccontextmanager
-    async def _handle_request_errors(self):  # noqa: ANN202
+    async def _handle_request_errors():
         """Context manager for handling request errors.
 
         Raises
@@ -205,15 +208,15 @@ class PlurkOAuth:
             yield
         except aiohttp.ClientError as e:
             logger.error(f"Network error: {e}")
-            raise PlurkNetworkError(f"Failed to communicate with Plurk: {e}") from e  # noqa: E501
+            raise PlurkNetworkError(f"Failed to communicate with Plurk: {e}") from e
         except oauthlib.oauth1.OAuth1Error as e:
             logger.error(f"OAuth error: {e}")
-            raise PlurkAuthorizationError(f"OAuth authorization failed: {e}") from e  # noqa: E501
+            raise PlurkAuthorizationError(f"OAuth authorization failed: {e}") from e
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
             raise PlurkOAuthError(f"Unexpected error: {e}") from e
 
-    async def authorize(self, access_token: tuple[str, str] | None = None) -> None:  # noqa: E501
+    async def authorize(self, access_token: tuple[str, str] | None = None) -> None:
         """Authorize access to Plurk API.
 
         Parameters
@@ -229,7 +232,7 @@ class PlurkOAuth:
                 await self._complete_oauth_flow()
 
     async def _complete_oauth_flow(self) -> None:
-        """Complete the OAuth flow by getting request token, verifier, and access token."""  # noqa: E501
+        """Complete the OAuth flow by getting request token, verifier, and access token."""
         await self.get_request_token()
         verifier = await self.get_verifier()
         await self.get_access_token(verifier)
@@ -286,8 +289,9 @@ class PlurkOAuth:
                 response.raise_for_status()
                 return await self._parse_response(response)
 
+    @staticmethod
     async def _prepare_request_data(
-        self, data: dict[str, str] | None, files: dict[str, str] | None
+        data: dict[str, str] | None, files: dict[str, str] | None
     ) -> tuple[dict[str, str], Any]:
         """Prepare request data and headers.
 
@@ -317,7 +321,8 @@ class PlurkOAuth:
 
         return ({"Content-Type": "application/x-www-form-urlencoded"}, data)
 
-    async def _parse_response(self, response: aiohttp.ClientResponse) -> dict[str, Any]:  # noqa: E501
+    @staticmethod
+    async def _parse_response(response: aiohttp.ClientResponse) -> dict[str, Any]:
         """Parse API response based on content type.
 
         Parameters
@@ -367,7 +372,7 @@ class PlurkOAuth:
         """
         if not self.cred.token or not self.cred.token_secret:
             raise PlurkAuthorizationError("Please request a token first")
-        return f"{self.base_url}{self._authorization_url}?oauth_token={self.cred.token}"  # noqa: E501
+        return f"{self.base_url}{self._authorization_url}?oauth_token={self.cred.token}"
 
     async def get_verifier(self) -> str:
         """Get OAuth verifier code through user interaction.
@@ -378,9 +383,7 @@ class PlurkOAuth:
             OAuth verifier code
 
         """
-        return await self.user_interaction.get_verification_code(
-            self.get_verifier_url()
-        )
+        return await self.user_interaction.get_verification_code(self.get_verifier_url())
 
     async def get_access_token(self, verifier: str) -> None:
         """Get OAuth access token using verifier.
@@ -391,8 +394,6 @@ class PlurkOAuth:
             OAuth verifier code
 
         """
-        response = await self.request(
-            self._access_token_url, data={"verifier": verifier}
-        )
+        response = await self.request(self._access_token_url, data={"verifier": verifier})
         self.cred.token = response["oauth_token"]
         self.cred.token_secret = response["oauth_token_secret"]

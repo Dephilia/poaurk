@@ -7,6 +7,7 @@ from poaurk import OAuthCred, PlurkOAuth
 
 
 async def main() -> None:
+    """Program main entry."""
     oauth_cred = OAuthCred(
         os.environ["POAURK_TEST_KEY"], os.environ["POAURK_TEST_SECRET"], None, None
     )

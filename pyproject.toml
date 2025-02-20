@@ -17,6 +17,9 @@ build-backend = "setuptools.build_meta"
 version = {attr = "setuptools_scm.get_version"}
 readme = {file = "README.md", content-type = "text/markdown"}
 
+[tool.ruff]
+line-length = 100
+
 [tool.ruff.lint]
 select = ["E", "W", "N", "D", "F", "PL", "UP", "I"]
 
